@@ -147,11 +147,24 @@ async function detectModelShape(session, inputName){
     const expected = {};
     for(const m of matches){ expected[parseInt(m[1])] = parseInt(m[2]); }
     log('Probe revealed expected dims: ' + JSON.stringify(expected));
+
+    // Case A: channel mismatch reported at index 1 -> model is NCHW, channel slot is index1
     if(expected[1] === 3){
       return { layout: 'NCHW', size: expected[2] || expected[3] };
-    } else if(expected[3] === 3){
+    }
+    // Case B: channel mismatch reported at index 3 -> model is NHWC, channel slot is index3
+    if(expected[3] === 3){
       return { layout: 'NHWC', size: expected[1] || expected[2] };
     }
+    // Case C: only indices 2 & 3 mismatched (index1 channel already matched our NCHW dummy) -> NCHW confirmed
+    if(expected[2] !== undefined && expected[3] !== undefined && expected[1] === undefined){
+      return { layout: 'NCHW', size: expected[2] };
+    }
+    // Case D: only indices 1 & 2 mismatched (index3 channel already matched) -> NHWC confirmed
+    if(expected[1] !== undefined && expected[2] !== undefined && expected[3] === undefined){
+      return { layout: 'NHWC', size: expected[1] };
+    }
+    log('Ambiguous probe result — could not determine layout automatically.');
     return { layout: null, size: null };
   }
 }
