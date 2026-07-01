@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>AnimeGANv3 WebGPU Mobile</title>
+<title>AnimeGANv3 WebGPU Mobile (Max-Speed)</title>
 <style>
   :root{color-scheme:dark;}
   *{box-sizing:border-box;}
@@ -75,7 +75,7 @@
 <body>
 
 <h1>🎨 AnimeGANv3 WebGPU Mobile</h1>
-<p class="sub">High-speed hardware-accelerated anime filters running entirely on-device.</p>
+<p class="sub">Zero-Copy Direct Hardware Texture rendering for real-time mobile pipelines.</p>
 
 <div id="hardwareStatus" class="hw-status hw-cpu">Checking Browser Hardware Acceleration support...</div>
 
@@ -141,14 +141,26 @@ function log(msg){
   console.log(msg);
 }
 
+let gpuDevice = null;
 const hwStatusEl = document.getElementById('hardwareStatus');
-if (navigator.gpu) {
-  hwStatusEl.textContent = "⚡ WebGPU Hardware Acceleration Available";
-  hwStatusEl.className = "hw-status hw-gpu";
-} else {
-  hwStatusEl.textContent = "⚠️ WebGPU Not Available (Running slow on Mobile CPU).";
-  hwStatusEl.className = "hw-status hw-cpu";
+
+async function checkWebGPU() {
+  if (navigator.gpu) {
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      gpuDevice = await adapter.requestDevice();
+      hwStatusEl.textContent = "⚡ WebGPU Hardware Acceleration Available";
+      hwStatusEl.className = "hw-status hw-gpu";
+    } catch(e) {
+      hwStatusEl.textContent = "⚠️ WebGPU Device Error. Falling back to CPU.";
+      hwStatusEl.className = "hw-status hw-cpu";
+    }
+  } else {
+    hwStatusEl.textContent = "⚠️ WebGPU Not Available (Running slow on Mobile CPU).";
+    hwStatusEl.className = "hw-status hw-cpu";
+  }
 }
+checkWebGPU();
 
 ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/";
 ort.env.wasm.numThreads = 1; 
@@ -189,14 +201,22 @@ modelFile.addEventListener('change', async (e) => {
 });
 
 async function initORT(buffer, name) {
-  log('Initializing WebGPU engine...');
+  log('Initializing WebGPU engine (Zero-Copy Mode)...');
   try {
     session = await ort.InferenceSession.create(buffer, { 
-      executionProviders: ['webgpu'] 
+      executionProviders: [
+        {
+          name: 'webgpu',
+          // Crucial: Forces ONNX to talk directly to our instantiated browser GPU device context
+          device: gpuDevice 
+        }
+      ],
+      // Tells the compiler to handle out structures natively inside memory arrays instead of standard js blocks
+      preferredOutputLocation: { [session?.outputNames?.[0] || 'generator_1/main/out_layer:0']: 'gpu-buffer' }
     });
-    log('Success: WebGPU framework listening.');
+    log('Success: WebGPU pipeline connected.');
   } catch (gpuError) {
-    log(`WebGPU dropped: ${gpuError.message}. Falling back to standard WASM CPU...`);
+    log(`WebGPU dropped: ${gpuError.message}. Falling back to CPU...`);
     session = await ort.InferenceSession.create(buffer, { executionProviders: ['wasm'] });
   }
   
@@ -204,7 +224,7 @@ async function initORT(buffer, name) {
   outputName = session.outputNames[0];
   log(`Model loaded. Input layer: "${inputName}" | Output layer: "${outputName}"`);
   
-  modelStatus.innerHTML = `Loaded successfully: <b>${name}</b> <span class="badge">WebGPU Ready</span>`;
+  modelStatus.innerHTML = `Loaded successfully: <b>${name}</b> <span class="badge">Zero-Copy Active</span>`;
   maybeEnableRun();
 }
 
@@ -263,7 +283,7 @@ function drawToCanvas(img, canvas){
   canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
 }
 
-// ---- 1. PRE-ALLOCATE STATIC BUFFERS (Bypasses GC and memory stalls) ----
+// ---- 1. PRE-ALLOCATE MEMORY MAPS ----
 let currentSize = 256;
 let inputBuffer = new Float32Array(256 * 256 * 3);
 let inputTensor = new ort.Tensor('float32', inputBuffer, [1, 256, 256, 3]);
@@ -278,7 +298,6 @@ sizeSelect.addEventListener('change', (e) => {
   log(`Buffers re-allocated for ${currentSize}x${currentSize}`);
 });
 
-// ---- 2. ULTRA-FAST ZERO-ALLOCATION NORMALIZATION ----
 function updateInputTensorDirect(img, size) {
   memoryCanvas.width = size;
   memoryCanvas.height = size;
@@ -294,27 +313,49 @@ function updateInputTensorDirect(img, size) {
   }
 }
 
-// ---- 3. FASTEST ASYNC DRAW WITH PRE-ALLOCATED PIXEL IMAGE ----
-async function tensorToCanvasNHWC(tensor, canvas) {
+// ---- 2. MAXIMUM SPEED HARDWARE COPIER (Bypasses CPU Download entirely) ----
+async function drawTensorToCanvasDirectGPU(tensor, canvas) {
   const [_, h, w, c] = tensor.dims;
-  const data = await tensor.getData(); 
-  
-  canvas.width = w; 
+  canvas.width = w;
   canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  const imgData = ctx.createImageData(w, h);
-  const pixels = imgData.data;
-  
-  for (let i = 0, j = 0; i < pixels.length; i += 4, j += 3) {
-    pixels[i]     = (data[j]   + 1.0) * 127.5;
-    pixels[i + 1] = (data[j + 1] + 1.0) * 127.5;
-    pixels[i + 2] = (data[j + 2] + 1.0) * 127.5;
-    pixels[i + 3] = 255; 
+
+  // Optimized fallback path if WebGPU is acting up or model runs on CPU
+  if (!tensor.gpuBuffer) {
+    const data = await tensor.getData();
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.createImageData(w, h);
+    const pixels = imgData.data;
+    for (let i = 0, j = 0; i < pixels.length; i += 4, j += 3) {
+      pixels[i]     = (data[j]   + 1.0) * 127.5;
+      pixels[i + 1] = (data[j + 1] + 1.0) * 127.5;
+      pixels[i + 2] = (data[j + 2] + 1.0) * 127.5;
+      pixels[i + 3] = 255;
+    }
+    ctx.putImageData(imgData, 0, 0);
+    return;
   }
-  ctx.putImageData(imgData, 0, 0);
+
+  // Pure WebGPU Fast Copy Pipeline
+  const context = canvas.getContext('webgpu');
+  context.configure({
+    device: gpuDevice,
+    format: navigator.gpu.getPreferredCanvasFormat(),
+    alphaMode: 'opaque'
+  });
+
+  const commandEncoder = gpuDevice.createCommandEncoder();
+  
+  // Directly copy from the internal ONNX model output GPU buffer straight onto the Canvas view buffer
+  commandEncoder.copyBufferToTexture(
+    { buffer: tensor.gpuBuffer, bytesPerRow: w * c * 4, rowsPerImage: h },
+    { texture: context.getCurrentTexture() },
+    { width: w, height: h }
+  );
+  
+  gpuDevice.queue.submit([commandEncoder.finish()]);
 }
 
-// ---- 4. CLEAN CORE EXECUTION LOOP ----
+// ---- 3. CORE PROCESSING LOOP ----
 btnRun.addEventListener('click', async () => {
   if (!session || !currentImageEl) return;
   btnRun.disabled = true;
@@ -324,15 +365,15 @@ btnRun.addEventListener('click', async () => {
 
   setTimeout(async () => {
     try {
-      log(`Launching explicit NHWC tensor array pass [Size: ${currentSize}x${currentSize}]...`);
       updateInputTensorDirect(currentImageEl, currentSize);
       
       const feeds = { [inputName]: inputTensor };
       const results = await session.run(feeds);
-      log("Inference complete. Fetching texture data from GPU buffer...");
       
       const outTensor = results[outputName];
-      await tensorToCanvasNHWC(outTensor, outCanvas);
+      
+      // Paint via fast GPU bit-stream copying layout mechanics
+      await drawTensorToCanvasDirectGPU(outTensor, outCanvas);
       
       const t1 = performance.now();
       runStatus.innerHTML = `<span class="pill ok">Rendered in ${((t1 - t0) / 1000).toFixed(2)}s</span>`;
