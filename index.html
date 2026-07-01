@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>AnimeGANv2 Mobile Tester</title>
+<title>AnimeGANv3 Mobile Tester</title>
 <style>
   :root{color-scheme:dark;}
   *{box-sizing:border-box;}
@@ -19,11 +19,11 @@
   }
   label{display:block;font-size:13px;color:#b6b6c0;margin-bottom:6px;font-weight:600;}
   input[type=file]{
-    width:100%;font-size:13px;color:#cfcfd6;
+    width:100%;font-size:13px;color:#cfcfd6;margin-top:8px;
   }
   select{
     width:100%;padding:10px;border-radius:10px;background:#11131a;color:#fff;
-    border:1px solid #2c303a;font-size:15px;
+    border:1px solid #2c303a;font-size:15px;margin-bottom:8px;
   }
   button{
     width:100%;padding:13px;border:none;border-radius:12px;
@@ -59,12 +59,21 @@
 </head>
 <body>
 
-<h1>🎨 AnimeGANv2 Mobile Tester</h1>
-<p class="sub">Single-file, no install. Pick a model + image/camera, run inference on-device.</p>
+<h1>🎨 AnimeGANv3 Mobile Tester</h1>
+<p class="sub">Run ultra-lightweight AnimeGANv3 models directly inside your phone's browser.</p>
 
 <div class="card">
-  <label>1. Load ONNX model (from phone storage)</label>
-  <input type="file" id="modelFile" accept=".onnx">
+  <label>1. Select AnimeGANv3 Model</label>
+  <select id="modelSelect">
+    <option value="" selected disabled>-- Choose a model --</option>
+    <option value="https://cors-anywhere.herokuapp.com/https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_Hayao_36.onnx">Hayao Miyazaki / Ghibli Style (Remote URL)</option>
+    <option value="https://cors-anywhere.herokuapp.com/https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_Shinkai_37.onnx">Makoto Shinkai Style (Remote URL)</option>
+    <option value="local">📁 Upload Local .onnx File...</option>
+  </select>
+  
+  <div id="localFileWrapper" style="display:none;">
+    <input type="file" id="modelFile" accept=".onnx">
+  </div>
   <div class="status" id="modelStatus">No model loaded yet.</div>
 </div>
 
@@ -82,10 +91,9 @@
 <div class="card">
   <label>3. Inference settings</label>
   <select id="sizeSelect">
-    <option value="auto" selected>Auto-detect from model</option>
-    <option value="256">256 x 256 (force)</option>
-    <option value="384">384 x 384 (force)</option>
-    <option value="512">512 x 512 (force)</option>
+    <option value="auto">Auto-detect from model</option>
+    <option value="256">256 x 256 (Faster)</option>
+    <option value="512" selected>512 x 512 (Recommended for v3)</option>
   </select>
   <button class="btn-primary" id="btnRun" disabled>▶ Run Inference</button>
   <div class="status" id="runStatus"></div>
@@ -120,19 +128,17 @@ function log(msg){
   console.log(msg);
 }
 
-// Force WASM backend - most reliable across mobile browsers for custom ops
+// Optimized settings for mobile execution
 ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/";
-ort.env.wasm.numThreads = 1; // single-thread = safest on mobile (no SharedArrayBuffer/COOP-COEP needed)
+ort.env.wasm.numThreads = 1; 
 
 let session = null;
 let inputName = null;
 let outputName = null;
-let currentImageEl = null; // an <img> or <video> frame source
-let detected = { layout: null, size: null }; // auto-detected from model
+let currentImageEl = null; 
+let detected = { layout: null, size: null }; 
 
 async function detectModelShape(session, inputName){
-  // Probe with a tiny dummy NCHW tensor; if the model has a fixed shape,
-  // ORT throws an error that tells us the exact expected dims.
   try{
     const dummy = new ort.Tensor('float32', new Float32Array(1*3*64*64), [1,3,64,64]);
     await session.run({ [inputName]: dummy });
@@ -148,27 +154,24 @@ async function detectModelShape(session, inputName){
     for(const m of matches){ expected[parseInt(m[1])] = parseInt(m[2]); }
     log('Probe revealed expected dims: ' + JSON.stringify(expected));
 
-    // Case A: channel mismatch reported at index 1 -> model is NCHW, channel slot is index1
     if(expected[1] === 3){
       return { layout: 'NCHW', size: expected[2] || expected[3] };
     }
-    // Case B: channel mismatch reported at index 3 -> model is NHWC, channel slot is index3
     if(expected[3] === 3){
       return { layout: 'NHWC', size: expected[1] || expected[2] };
     }
-    // Case C: only indices 2 & 3 mismatched (index1 channel already matched our NCHW dummy) -> NCHW confirmed
     if(expected[2] !== undefined && expected[3] !== undefined && expected[1] === undefined){
       return { layout: 'NCHW', size: expected[2] };
     }
-    // Case D: only indices 1 & 2 mismatched (index3 channel already matched) -> NHWC confirmed
     if(expected[1] !== undefined && expected[2] !== undefined && expected[3] === undefined){
       return { layout: 'NHWC', size: expected[1] };
     }
-    log('Ambiguous probe result — could not determine layout automatically.');
     return { layout: null, size: null };
   }
 }
 
+const modelSelect = document.getElementById('modelSelect');
+const localFileWrapper = document.getElementById('localFileWrapper');
 const modelFile = document.getElementById('modelFile');
 const modelStatus = document.getElementById('modelStatus');
 const imageFile = document.getElementById('imageFile');
@@ -186,33 +189,61 @@ function maybeEnableRun(){
   btnRun.disabled = !(session && currentImageEl);
 }
 
-// ---- Load model ----
+// Handles switching between URL downloads and local storage uploads
+modelSelect.addEventListener('change', async () => {
+  const val = modelSelect.value;
+  if (val === 'local') {
+    localFileWrapper.style.display = 'block';
+    modelStatus.textContent = 'Awaiting manual file upload...';
+  } else if (val) {
+    localFileWrapper.style.display = 'none';
+    await loadModelFromUrl(val);
+  }
+});
+
+async function loadModelFromUrl(url) {
+  modelStatus.textContent = `Downloading remote model architecture...`;
+  log(`Fetching model from URL...`);
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP status ${response.status}`);
+    const buf = await response.arrayBuffer();
+    await initORT(buf, "Remote Model");
+  } catch(err) {
+    modelStatus.textContent = 'URL fetch blocked/failed. See logs.';
+    log('ERROR: ' + err.message + '. Hint: If CORS blocks the download, upload the model file manually via the local option.');
+  }
+}
+
 modelFile.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if(!file) return;
-  modelStatus.textContent = `Loading ${file.name} ...`;
-  log(`Reading model file: ${file.name} (${(file.size/1024/1024).toFixed(1)} MB)`);
+  modelStatus.textContent = `Loading ${file.name}...`;
   try{
     const buf = await file.arrayBuffer();
-    log('Creating inference session (wasm backend)...');
-    session = await ort.InferenceSession.create(buf, { executionProviders: ['wasm'] });
-    inputName = session.inputNames[0];
-    outputName = session.outputNames[0];
-    log(`Model ready. inputs=[${session.inputNames.join(',')}] outputs=[${session.outputNames.join(',')}]`);
-    log('Probing for fixed input shape...');
-    detected = await detectModelShape(session, inputName);
-    if(detected.layout){
-      modelStatus.innerHTML = `Loaded: <b>${file.name}</b> <span class="badge">${detected.layout} ${detected.size}x${detected.size}</span>`;
-      log(`Detected fixed shape: ${detected.layout} @ ${detected.size}px`);
-    } else {
-      modelStatus.innerHTML = `Loaded: <b>${file.name}</b> <span class="badge">dynamic shape</span>`;
-    }
-    maybeEnableRun();
+    await initORT(buf, file.name);
   }catch(err){
-    modelStatus.textContent = 'Failed to load model. See log.';
+    modelStatus.textContent = 'Failed to compile session.';
     log('ERROR loading model: ' + err.message);
   }
 });
+
+async function initORT(buffer, name) {
+  log('Instantiating WebAssembly Inference Session...');
+  session = await ort.InferenceSession.create(buffer, { executionProviders: ['wasm'] });
+  inputName = session.inputNames[0];
+  outputName = session.outputNames[0];
+  log(`Session initialized successfully. Target IO nodes: Input='${inputName}', Output='${outputName}'`);
+  
+  detected = await detectModelShape(session, inputName);
+  if(detected.layout){
+    modelStatus.innerHTML = `Loaded: <b>${name}</b> <span class="badge">${detected.layout} ${detected.size}x${detected.size}</span>`;
+    log(`Auto-configured engine constraints: ${detected.layout} shape detected.`);
+  } else {
+    modelStatus.innerHTML = `Loaded: <b>${name}</b> <span class="badge">Dynamic / v3 Default</span>`;
+  }
+  maybeEnableRun();
+}
 
 // ---- Photo picker ----
 btnPickPhoto.addEventListener('click', () => imageFile.click());
@@ -238,9 +269,9 @@ btnCamera.addEventListener('click', async () => {
     video.srcObject = stream;
     video.style.display = 'block';
     btnSnap.style.display = 'block';
-    log('Camera stream started.');
+    log('Camera stream initialized.');
   }catch(err){
-    log('Camera error: ' + err.message + ' (needs HTTPS + permission)');
+    log('Camera access error: ' + err.message);
     alert('Camera failed: ' + err.message);
   }
 });
@@ -254,7 +285,7 @@ btnSnap.addEventListener('click', () => {
   img.onload = () => {
     currentImageEl = img;
     drawToCanvas(img, inCanvas);
-    log(`Captured frame ${img.width}x${img.height}`);
+    log(`Captured video frame ${img.width}x${img.height}`);
     maybeEnableRun();
   };
   img.src = tmp.toDataURL('image/png');
@@ -271,19 +302,18 @@ function drawToCanvas(img, canvas){
   canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
 }
 
-// ---- Preprocessing helpers ----
-// AnimeGANv2 (akhaliq onnx port) expects NHWC float32, range [-1,1], RGB.
+// ---- Normalization Helpers ----
 function imageToTensorNHWC(img, size){
   const c = document.createElement('canvas');
   c.width = size; c.height = size;
   const ctx = c.getContext('2d');
   ctx.drawImage(img, 0, 0, size, size);
-  const data = ctx.getImageData(0, 0, size, size).data; // RGBA, size*size*4
+  const data = ctx.getImageData(0, 0, size, size).data; 
   const out = new Float32Array(size * size * 3);
   for(let i = 0, j = 0; i < data.length; i += 4, j += 3){
-    out[j]   = (data[i]   / 127.5) - 1.0; // R
-    out[j+1] = (data[i+1] / 127.5) - 1.0; // G
-    out[j+2] = (data[i+2] / 127.5) - 1.0; // B
+    out[j]   = (data[i]   / 127.5) - 1.0; 
+    out[j+1] = (data[i+1] / 127.5) - 1.0; 
+    out[j+2] = (data[i+2] / 127.5) - 1.0; 
   }
   return new ort.Tensor('float32', out, [1, size, size, 3]);
 }
@@ -297,9 +327,9 @@ function imageToTensorNCHW(img, size){
   const out = new Float32Array(3 * size * size);
   const plane = size * size;
   for(let p = 0, i = 0; p < plane; p++, i += 4){
-    out[p]           = (data[i]   / 127.5) - 1.0; // R plane
-    out[p + plane]   = (data[i+1] / 127.5) - 1.0; // G plane
-    out[p + 2*plane] = (data[i+2] / 127.5) - 1.0; // B plane
+    out[p]           = (data[i]   / 127.5) - 1.0; 
+    out[p + plane]   = (data[i+1] / 127.5) - 1.0; 
+    out[p + 2*plane] = (data[i+2] / 127.5) - 1.0; 
   }
   return new ort.Tensor('float32', out, [1, 3, size, size]);
 }
@@ -337,22 +367,22 @@ function tensorToCanvasNCHW(tensor, canvas){
 
 function clamp255(v){ return Math.max(0, Math.min(255, v)); }
 
-// ---- Run inference, trying NHWC then NCHW ----
+// ---- Process Loop Execution ----
 btnRun.addEventListener('click', async () => {
   if(!session || !currentImageEl) return;
   btnRun.disabled = true;
-  runStatus.textContent = 'Running inference...';
+  runStatus.textContent = 'Processing frame elements...';
   const sizeChoice = sizeSelect.value;
-  const size = sizeChoice === 'auto' ? (detected.size || 384) : parseInt(sizeChoice, 10);
+  const size = sizeChoice === 'auto' ? (detected.size || 512) : parseInt(sizeChoice, 10);
   const t0 = performance.now();
 
   let attempts;
   if(sizeChoice === 'auto' && detected.layout){
-    // We know the exact required layout — only try that one, in correct order.
     attempts = detected.layout === 'NCHW'
-      ? [{ name: 'NCHW (detected)', build: () => imageToTensorNCHW(currentImageEl, size), draw: tensorToCanvasNCHW }]
-      : [{ name: 'NHWC (detected)', build: () => imageToTensorNHWC(currentImageEl, size), draw: tensorToCanvasNHWC }];
+      ? [{ name: 'NCHW', build: () => imageToTensorNCHW(currentImageEl, size), draw: tensorToCanvasNCHW }]
+      : [{ name: 'NHWC', build: () => imageToTensorNHWC(currentImageEl, size), draw: tensorToCanvasNHWC }];
   } else {
+    // Default fallback structural array sequence
     attempts = [
       { name: 'NCHW', build: () => imageToTensorNCHW(currentImageEl, size), draw: tensorToCanvasNCHW },
       { name: 'NHWC', build: () => imageToTensorNHWC(currentImageEl, size), draw: tensorToCanvasNHWC },
@@ -362,30 +392,29 @@ btnRun.addEventListener('click', async () => {
   let success = false;
   for(const attempt of attempts){
     try{
-      log(`Trying layout ${attempt.name} at ${size}x${size}...`);
+      log(`Running engine execution under structure ${attempt.name} at ${size}x${size}...`);
       const tensor = attempt.build();
       const feeds = { [inputName]: tensor };
       const results = await session.run(feeds);
       const outTensor = results[outputName];
-      log(`Success with ${attempt.name}. Output dims: [${outTensor.dims.join(',')}]`);
+      log(`Inference successful. Output array format mapping: [${outTensor.dims.join(',')}]`);
       attempt.draw(outTensor, outCanvas);
       const t1 = performance.now();
-      runStatus.innerHTML = `<span class="pill ok">Done in ${((t1-t0)/1000).toFixed(2)}s (${attempt.name})</span>`;
+      runStatus.innerHTML = `<span class="pill ok">Rendered in ${((t1-t0)/1000).toFixed(2)}s</span>`;
       success = true;
       break;
     }catch(err){
-      log(`Layout ${attempt.name} failed: ${err.message}`);
+      log(`Array structure conversion configuration ${attempt.name} failed: ${err.message}`);
     }
   }
 
   if(!success){
-    runStatus.innerHTML = `<span class="pill err">Both layouts failed — check log</span>`;
+    runStatus.innerHTML = `<span class="pill err">Inference failure — check logs</span>`;
   }
   btnRun.disabled = false;
 });
 
-log('App ready. Load a model and an image to begin.');
-log('Tip: if both NHWC/NCHW fail, the model likely uses a different input name/shape — check the log for actual dims and tell Claude.');
+log('Application deployment status: Operational.');
 </script>
 </body>
 </html>
