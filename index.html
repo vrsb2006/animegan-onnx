@@ -263,59 +263,71 @@ function drawToCanvas(img, canvas){
   canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
 }
 
-// ---- Pure Optimized NHWC Normalization Math ----
-function imageToTensorNHWC(img, size){
-  const c = document.createElement('canvas');
-  c.width = size; c.height = size;
-  const ctx = c.getContext('2d');
-  ctx.drawImage(img, 0, 0, size, size);
-  const data = ctx.getImageData(0, 0, size, size).data; 
-  const out = new Float32Array(size * size * 3);
-  for(let i = 0, j = 0; i < data.length; i += 4, j += 3){
-    out[j]   = (data[i]   / 127.5) - 1.0; 
-    out[j+1] = (data[i+1] / 127.5) - 1.0; 
-    out[j+2] = (data[i+2] / 127.5) - 1.0; 
+// ---- 1. PRE-ALLOCATE STATIC BUFFERS (Bypasses GC and memory stalls) ----
+let currentSize = 256;
+let inputBuffer = new Float32Array(256 * 256 * 3);
+let inputTensor = new ort.Tensor('float32', inputBuffer, [1, 256, 256, 3]);
+
+const memoryCanvas = document.createElement('canvas');
+const memoryCtx = memoryCanvas.getContext('2d', { willReadFrequently: true });
+
+sizeSelect.addEventListener('change', (e) => {
+  currentSize = parseInt(e.target.value, 10);
+  inputBuffer = new Float32Array(currentSize * currentSize * 3);
+  inputTensor = new ort.Tensor('float32', inputBuffer, [1, currentSize, currentSize, 3]);
+  log(`Buffers re-allocated for ${currentSize}x${currentSize}`);
+});
+
+// ---- 2. ULTRA-FAST ZERO-ALLOCATION NORMALIZATION ----
+function updateInputTensorDirect(img, size) {
+  memoryCanvas.width = size;
+  memoryCanvas.height = size;
+  memoryCtx.drawImage(img, 0, 0, size, size);
+  
+  const imgData = memoryCtx.getImageData(0, 0, size, size);
+  const data = imgData.data;
+  
+  for (let i = 0, j = 0; i < data.length; i += 4, j += 3) {
+    inputBuffer[j]     = (data[i]     / 127.5) - 1.0; 
+    inputBuffer[j + 1] = (data[i + 1] / 127.5) - 1.0; 
+    inputBuffer[j + 2] = (data[i + 2] / 127.5) - 1.0; 
   }
-  return new ort.Tensor('float32', out, [1, size, size, 3]);
 }
 
-// Fixed function: Async fetch data from GPU to CPU boundary
-async function tensorToCanvasNHWC(tensor, canvas){
+// ---- 3. FASTEST ASYNC DRAW WITH PRE-ALLOCATED PIXEL IMAGE ----
+async function tensorToCanvasNHWC(tensor, canvas) {
   const [_, h, w, c] = tensor.dims;
-  
-  // FIX: This forces the engine to download the GPU tensor memory into an accessible Float32Array
   const data = await tensor.getData(); 
   
-  canvas.width = w; canvas.height = h;
+  canvas.width = w; 
+  canvas.height = h;
   const ctx = canvas.getContext('2d');
   const imgData = ctx.createImageData(w, h);
   const pixels = imgData.data;
   
-  for(let i = 0, j = 0; i < pixels.length; i += 4, j += 3){
-    pixels[i]     = Math.max(0, Math.min(255, (data[j]   + 1) * 127.5));
-    pixels[i+1]   = Math.max(0, Math.min(255, (data[j+1] + 1) * 127.5));
-    pixels[i+2]   = Math.max(0, Math.min(255, (data[j+2] + 1) * 127.5));
-    pixels[i+3]   = 255;
+  for (let i = 0, j = 0; i < pixels.length; i += 4, j += 3) {
+    pixels[i]     = (data[j]   + 1.0) * 127.5;
+    pixels[i + 1] = (data[j + 1] + 1.0) * 127.5;
+    pixels[i + 2] = (data[j + 2] + 1.0) * 127.5;
+    pixels[i + 3] = 255; 
   }
   ctx.putImageData(imgData, 0, 0);
 }
 
-// ---- Optimized Core Execution Loop ----
+// ---- 4. CLEAN CORE EXECUTION LOOP ----
 btnRun.addEventListener('click', async () => {
-  if(!session || !currentImageEl) return;
+  if (!session || !currentImageEl) return;
   btnRun.disabled = true;
   runStatus.textContent = 'Processing...';
   
-  const size = parseInt(sizeSelect.value, 10);
   const t0 = performance.now();
 
-  // Short dynamic delay handle to allow mobile UI rendering status thread to refresh
   setTimeout(async () => {
-    try{
-      log(`Launching explicit NHWC tensor array pass [Size: ${size}x${size}]...`);
-      const tensor = imageToTensorNHWC(currentImageEl, size);
-      const feeds = { [inputName]: tensor };
+    try {
+      log(`Launching explicit NHWC tensor array pass [Size: ${currentSize}x${currentSize}]...`);
+      updateInputTensorDirect(currentImageEl, currentSize);
       
+      const feeds = { [inputName]: inputTensor };
       const results = await session.run(feeds);
       log("Inference complete. Fetching texture data from GPU buffer...");
       
@@ -323,13 +335,13 @@ btnRun.addEventListener('click', async () => {
       await tensorToCanvasNHWC(outTensor, outCanvas);
       
       const t1 = performance.now();
-      runStatus.innerHTML = `<span class="pill ok">Rendered in ${((t1-t0)/1000).toFixed(2)}s</span>`;
-    }catch(err){
-      log(`Execution variant fault: ${err.message}`);
-      runStatus.innerHTML = `<span class="pill" style="background:#3a1d1d;color:#db7f7f;">Inference error. See logs.</span>`;
+      runStatus.innerHTML = `<span class="pill ok">Rendered in ${((t1 - t0) / 1000).toFixed(2)}s</span>`;
+    } catch (err) {
+      log(`Execution fault: ${err.message}`);
+      runStatus.innerHTML = `<span class="pill" style="background:#3a1d1d;color:#db7f7f;">Inference error.</span>`;
     }
     btnRun.disabled = false;
-  }, 50);
+  }, 30);
 });
 
 log('System ready.');
