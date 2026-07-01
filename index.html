@@ -189,9 +189,8 @@ modelFile.addEventListener('change', async (e) => {
 });
 
 async function initORT(buffer, name) {
-  log('Initializing WebGPU engine (Standard Memory Mode)...');
+  log('Initializing WebGPU engine...');
   try {
-    // Removed gpu-buffer allocation mapping layer to bypass browser thread lock bugs
     session = await ort.InferenceSession.create(buffer, { 
       executionProviders: ['webgpu'] 
     });
@@ -280,9 +279,13 @@ function imageToTensorNHWC(img, size){
   return new ort.Tensor('float32', out, [1, size, size, 3]);
 }
 
-function tensorToCanvasNHWC(tensor, canvas){
+// Fixed function: Async fetch data from GPU to CPU boundary
+async function tensorToCanvasNHWC(tensor, canvas){
   const [_, h, w, c] = tensor.dims;
-  const data = tensor.data;
+  
+  // FIX: This forces the engine to download the GPU tensor memory into an accessible Float32Array
+  const data = await tensor.getData(); 
+  
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d');
   const imgData = ctx.createImageData(w, h);
@@ -301,7 +304,7 @@ function tensorToCanvasNHWC(tensor, canvas){
 btnRun.addEventListener('click', async () => {
   if(!session || !currentImageEl) return;
   btnRun.disabled = true;
-  runStatus.textContent = 'Processing execution loop...';
+  runStatus.textContent = 'Processing...';
   
   const size = parseInt(sizeSelect.value, 10);
   const t0 = performance.now();
@@ -314,10 +317,10 @@ btnRun.addEventListener('click', async () => {
       const feeds = { [inputName]: tensor };
       
       const results = await session.run(feeds);
-      log("Inference complete. Parsing texture mapping channels...");
+      log("Inference complete. Fetching texture data from GPU buffer...");
       
       const outTensor = results[outputName];
-      tensorToCanvasNHWC(outTensor, outCanvas);
+      await tensorToCanvasNHWC(outTensor, outCanvas);
       
       const t1 = performance.now();
       runStatus.innerHTML = `<span class="pill ok">Rendered in ${((t1-t0)/1000).toFixed(2)}s</span>`;
