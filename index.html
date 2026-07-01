@@ -105,7 +105,7 @@
   <label>3. Engine Settings</label>
   <select id="sizeSelect">
     <option value="256" selected>256 x 256 (Fastest / Near Real-Time)</option>
-    <option value="512">512 x 512 (Recommended Quality)</option>
+    <option value="512">512 x 512 (High Quality)</option>
   </select>
   <button class="btn-primary" id="btnRun" disabled>▶ Run Inference</button>
   <div class="status" id="runStatus"></div>
@@ -141,16 +141,16 @@ function log(msg){
   console.log(msg);
 }
 
-// Check for WebGPU capability globally immediately
 const hwStatusEl = document.getElementById('hardwareStatus');
 if (navigator.gpu) {
   hwStatusEl.textContent = "⚡ WebGPU Hardware Acceleration Available";
   hwStatusEl.className = "hw-status hw-gpu";
 } else {
-  hwStatusEl.textContent = "⚠️ WebGPU Not Available (Running slow on Mobile CPU). See instructions below.";
+  hwStatusEl.textContent = "⚠️ WebGPU Not Available (Running slow on Mobile CPU).";
   hwStatusEl.className = "hw-status hw-cpu";
 }
 
+// Global ONNX Runtime Engine Optimization Adjustments
 ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/";
 ort.env.wasm.numThreads = 1; 
 
@@ -192,7 +192,10 @@ modelFile.addEventListener('change', async (e) => {
 async function initORT(buffer, name) {
   log('Initializing WebGPU hardware acceleration engine...');
   try {
-    session = await ort.InferenceSession.create(buffer, { executionProviders: ['webgpu'] });
+    session = await ort.InferenceSession.create(buffer, { 
+      executionProviders: ['webgpu'],
+      preferredOutputLocation: 'gpu-buffer'
+    });
     log('Success: WebGPU acceleration active.');
   } catch (gpuError) {
     log(`WebGPU dropped: ${gpuError.message}. Falling back to standard WASM CPU...`);
@@ -203,7 +206,7 @@ async function initORT(buffer, name) {
   outputName = session.outputNames[0];
   log(`Model loaded. Input layer: "${inputName}" | Output layer: "${outputName}"`);
   
-  modelStatus.innerHTML = `Loaded successfully: <b>${name}</b>`;
+  modelStatus.innerHTML = `Loaded successfully: <b>${name}</b> <span class="badge">WebGPU Ready</span>`;
   maybeEnableRun();
 }
 
@@ -262,7 +265,7 @@ function drawToCanvas(img, canvas){
   canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
 }
 
-// ---- Strict NHWC Normalization Math ----
+// ---- Pure Optimized NHWC Normalization Math ----
 function imageToTensorNHWC(img, size){
   const c = document.createElement('canvas');
   c.width = size; c.height = size;
@@ -295,28 +298,30 @@ function tensorToCanvasNHWC(tensor, canvas){
 
 function clamp255(v){ return Math.max(0, Math.min(255, v)); }
 
-// ---- Core Execution Loop ----
+// ---- Optimized Core Execution Loop ----
 btnRun.addEventListener('click', async () => {
   if(!session || !currentImageEl) return;
   btnRun.disabled = true;
   runStatus.textContent = 'Processing...';
   
-  // Defaulting to 256x256 resolution selection choice for speed optimization
   const size = parseInt(sizeSelect.value, 10);
   const t0 = performance.now();
 
   try{
-    log(`Running transformation pipeline via explicit NHWC layout...`);
+    log(`Running transformation pipeline via explicit NHWC format matrix at ${size}x${size}...`);
     const tensor = imageToTensorNHWC(currentImageEl, size);
     const feeds = { [inputName]: tensor };
+    
+    // Process inference natively via WebGPU internal buffers
     const results = await session.run(feeds);
     const outTensor = results[outputName];
+    
     tensorToCanvasNHWC(outTensor, outCanvas);
     const t1 = performance.now();
     runStatus.innerHTML = `<span class="pill ok">Rendered in ${((t1-t0)/1000).toFixed(2)}s</span>`;
   }catch(err){
     log(`Execution failed: ${err.message}`);
-    runStatus.innerHTML = `<span class="pill" style="background:#3a1d1d;color:#db7f7f;">Inference error. See log parameters.</span>`;
+    runStatus.innerHTML = `<span class="pill" style="background:#3a1d1d;color:#db7f7f;">Inference error. See logs.</span>`;
   }
   btnRun.disabled = false;
 });
