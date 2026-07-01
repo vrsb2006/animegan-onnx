@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>AnimeGANv3 WebGPU Mobile Tester</title>
+<title>AnimeGANv3 WebGPU Mobile</title>
 <style>
   :root{color-scheme:dark;}
   *{box-sizing:border-box;}
@@ -18,8 +18,19 @@
     padding:14px;margin-bottom:14px;
   }
   label{display:block;font-size:13px;color:#b6b6c0;margin-bottom:6px;font-weight:600;}
+  .download-links{
+    background:#11131a;border:1px solid #2c303a;border-radius:10px;
+    padding:10px;margin-bottom:12px;font-size:12px;
+  }
+  .download-links a{
+    display:block;color:#5b8def;text-decoration:none;padding:4px 0;
+  }
+  .download-links a:not(:last-child){
+    border-bottom:1px solid #22252e;
+  }
   input[type=file]{
-    width:100%;font-size:13px;color:#cfcfd6;margin-top:8px;
+    width:100%;font-size:14px;color:#cfcfd6;background:#262a33;
+    padding:10px;border-radius:10px;border:1px dashed #444;
   }
   select{
     width:100%;padding:10px;border-radius:10px;background:#11131a;color:#fff;
@@ -54,49 +65,47 @@
   }
   .pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;margin-right:6px;margin-top:6px;}
   .ok{background:#1d3a2a;color:#7fdb9a;}
-  .err{background:#3a1d1d;color:#db7f7f;}
+  .hw-status {
+    padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: bold; margin-bottom: 12px; text-align: center;
+  }
+  .hw-gpu { background: #1d3a2a; color: #7fdb9a; border: 1px solid #2e5c41; }
+  .hw-cpu { background: #3a2b1d; color: #f0c674; border: 1px solid #5c442e; }
 </style>
 </head>
 <body>
 
-<h1>🎨 AnimeGANv3 WebGPU Mobile Tester</h1>
-<p class="sub">Hardware-accelerated anime filters running 100% on-device.</p>
+<h1>🎨 AnimeGANv3 WebGPU Mobile</h1>
+<p class="sub">High-speed hardware-accelerated anime filters running entirely on-device.</p>
+
+<div id="hardwareStatus" class="hw-status hw-cpu">Checking Browser Hardware Acceleration support...</div>
 
 <div class="card">
-  <label>1. Select AnimeGANv3 Model Style</label>
-  <select id="modelSelect">
-    <option value="" selected disabled>-- Choose an Art Style --</option>
-    <option value="https://cors-anywhere.herokuapp.com/https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_Hayao_36.onnx">🎬 Studio Ghibli (Hayao Style)</option>
-    <option value="https://cors-anywhere.herokuapp.com/https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_Shinkai_37.onnx">🌌 Makoto Shinkai Style</option>
-    <option value="https://cors-anywhere.herokuapp.com/https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_Arcane.onnx">🎨 Arcane (Oil Paint Style)</option>
-    <option value="https://cors-anywhere.herokuapp.com/https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_Disney_v1.0.onnx">🏰 Classic Disney Style</option>
-    <option value="https://cors-anywhere.herokuapp.com/https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_PortraitSketch.onnx">✏️ Monochrome Sketch Style</option>
-    <option value="local">📁 Upload Local .onnx File...</option>
-  </select>
-  
-  <div id="localFileWrapper" style="display:none;">
-    <input type="file" id="modelFile" accept=".onnx">
+  <label>1. Download & Load Model</label>
+  <div class="download-links">
+    <span>Tap to download styles to your phone storage:</span>
+    <a href="https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_Hayao_36.onnx" target="_blank">📥 Download Studio Ghibli Style (.onnx)</a>
+    <a href="https://github.com/TachibanaYoshino/AnimeGANv3/releases/download/v1.1.0/AnimeGANv3_Shinkai_37.onnx" target="_blank">📥 Download Makoto Shinkai Style (.onnx)</a>
   </div>
-  <div class="status" id="modelStatus">Select a style or upload a file above.</div>
+  <input type="file" id="modelFile" accept=".onnx">
+  <div class="status" id="modelStatus">No model loaded yet. Select a downloaded .onnx file.</div>
 </div>
 
 <div class="card">
-  <label>2. Input image</label>
+  <label>2. Input Image</label>
   <div class="row">
     <div><button class="btn-secondary" id="btnCamera">📷 Use Camera</button></div>
     <div><input type="file" id="imageFile" accept="image/*" style="display:none" capture="environment"></div>
   </div>
-  <button class="btn-secondary" id="btnPickPhoto" style="margin-top:8px;">🖼️ Pick Photo from Gallery</button>
+  <button class="btn-secondary" id="btnPickPhoto" style="margin-top:8px;">🖼️ Pick from Gallery</button>
   <video id="video" autoplay playsinline style="width:100%;border-radius:10px;margin-top:10px;display:none;"></video>
   <button class="btn-secondary" id="btnSnap" style="display:none;">Capture Frame</button>
 </div>
 
 <div class="card">
-  <label>3. Inference settings</label>
+  <label>3. Engine Settings</label>
   <select id="sizeSelect">
-    <option value="auto">Auto-detect from model</option>
-    <option value="256">256 x 256 (Ultra Fast)</option>
-    <option value="512" selected>512 x 512 (Recommended Quality)</option>
+    <option value="256" selected>256 x 256 (Fastest / Near Real-Time)</option>
+    <option value="512">512 x 512 (Recommended Quality)</option>
   </select>
   <button class="btn-primary" id="btnRun" disabled>▶ Run Inference</button>
   <div class="status" id="runStatus"></div>
@@ -106,19 +115,19 @@
   <label>Result</label>
   <div class="imgwrap">
     <div class="imgbox">
-      <span>Input</span>
+      <span>Input Viewport</span>
       <canvas id="inCanvas"></canvas>
     </div>
     <div class="imgbox">
-      <span>Output</span>
+      <span>AI Output</span>
       <canvas id="outCanvas"></canvas>
     </div>
   </div>
 </div>
 
 <div class="card">
-  <label>Debug Log</label>
-  <div id="log">Waiting...</div>
+  <label>Debug Logs</label>
+  <div id="log">System waiting...</div>
 </div>
 
 <!-- WebGPU Accelerated ONNX Runtime Engine -->
@@ -132,6 +141,16 @@ function log(msg){
   console.log(msg);
 }
 
+// Check for WebGPU capability globally immediately
+const hwStatusEl = document.getElementById('hardwareStatus');
+if (navigator.gpu) {
+  hwStatusEl.textContent = "⚡ WebGPU Hardware Acceleration Available";
+  hwStatusEl.className = "hw-status hw-gpu";
+} else {
+  hwStatusEl.textContent = "⚠️ WebGPU Not Available (Running slow on Mobile CPU). See instructions below.";
+  hwStatusEl.className = "hw-status hw-cpu";
+}
+
 ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/";
 ort.env.wasm.numThreads = 1; 
 
@@ -139,29 +158,7 @@ let session = null;
 let inputName = null;
 let outputName = null;
 let currentImageEl = null; 
-let detected = { layout: null, size: null }; 
 
-async function detectModelShape(session, inputName){
-  try{
-    const dummy = new ort.Tensor('float32', new Float32Array(1*3*64*64), [1,3,64,64]);
-    await session.run({ [inputName]: dummy });
-    return { layout: null, size: null };
-  }catch(err){
-    const matches = [...err.message.matchAll(/index:\s*(\d+)\s*Got:\s*\d+\s*Expected:\s*(\d+)/g)];
-    if(matches.length === 0) return { layout: null, size: null };
-    const expected = {};
-    for(const m of matches){ expected[parseInt(m[1])] = parseInt(m[2]); }
-
-    if(expected[1] === 3) return { layout: 'NCHW', size: expected[2] || expected[3] };
-    if(expected[3] === 3) return { layout: 'NHWC', size: expected[1] || expected[2] };
-    if(expected[2] !== undefined && expected[3] !== undefined && expected[1] === undefined) return { layout: 'NCHW', size: expected[2] };
-    if(expected[1] !== undefined && expected[2] !== undefined && expected[3] === undefined) return { layout: 'NHWC', size: expected[1] };
-    return { layout: null, size: null };
-  }
-}
-
-const modelSelect = document.getElementById('modelSelect');
-const localFileWrapper = document.getElementById('localFileWrapper');
 const modelFile = document.getElementById('modelFile');
 const modelStatus = document.getElementById('modelStatus');
 const imageFile = document.getElementById('imageFile');
@@ -179,35 +176,10 @@ function maybeEnableRun(){
   btnRun.disabled = !(session && currentImageEl);
 }
 
-modelSelect.addEventListener('change', async () => {
-  const val = modelSelect.value;
-  if (val === 'local') {
-    localFileWrapper.style.display = 'block';
-    modelStatus.textContent = 'Awaiting local file selection...';
-  } else if (val) {
-    localFileWrapper.style.display = 'none';
-    await loadModelFromUrl(val);
-  }
-});
-
-async function loadModelFromUrl(url) {
-  modelStatus.textContent = `Downloading selected art style...`;
-  log(`Downloading model from proxy pipeline...`);
-  try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP status ${response.status}`);
-    const buf = await response.arrayBuffer();
-    await initORT(buf, "Remote URL Model");
-  } catch(err) {
-    modelStatus.innerHTML = '<span style="color:#db7f7f;">Download blocked by browser CORS policy. Please download the file below and upload manually.</span>';
-    log('ERROR: ' + err.message);
-  }
-}
-
 modelFile.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if(!file) return;
-  modelStatus.textContent = `Compiling ${file.name}...`;
+  modelStatus.textContent = `Compiling hardware execution graph for ${file.name}...`;
   try{
     const buf = await file.arrayBuffer();
     await initORT(buf, file.name);
@@ -223,7 +195,7 @@ async function initORT(buffer, name) {
     session = await ort.InferenceSession.create(buffer, { executionProviders: ['webgpu'] });
     log('Success: WebGPU acceleration active.');
   } catch (gpuError) {
-    log(`WebGPU initialization failed: ${gpuError.message}. Falling back to CPU execution...`);
+    log(`WebGPU dropped: ${gpuError.message}. Falling back to standard WASM CPU...`);
     session = await ort.InferenceSession.create(buffer, { executionProviders: ['wasm'] });
   }
   
@@ -231,16 +203,11 @@ async function initORT(buffer, name) {
   outputName = session.outputNames[0];
   log(`Model loaded. Input layer: "${inputName}" | Output layer: "${outputName}"`);
   
-  detected = await detectModelShape(session, inputName);
-  if(detected.layout){
-    modelStatus.innerHTML = `Loaded: <b>${name}</b> <span class="badge">${detected.layout} ${detected.size}x${detected.size}</span>`;
-  } else {
-    modelStatus.innerHTML = `Loaded: <b>${name}</b> <span class="badge">Dynamic Engine</span>`;
-  }
+  modelStatus.innerHTML = `Loaded successfully: <b>${name}</b>`;
   maybeEnableRun();
 }
 
-// ---- Media Sourcing Handlers ----
+// ---- Media Inputs Handlers ----
 btnPickPhoto.addEventListener('click', () => imageFile.click());
 imageFile.addEventListener('change', (e) => {
   const file = e.target.files[0];
@@ -278,7 +245,7 @@ btnSnap.addEventListener('click', () => {
   img.onload = () => {
     currentImageEl = img;
     drawToCanvas(img, inCanvas);
-    log(`Snapped viewport matrix frame.`);
+    log(`Snapped viewport frame matrix.`);
     maybeEnableRun();
   };
   img.src = tmp.toDataURL('image/png');
@@ -295,7 +262,7 @@ function drawToCanvas(img, canvas){
   canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
 }
 
-// ---- Data Processing Operations ----
+// ---- Strict NHWC Normalization Math ----
 function imageToTensorNHWC(img, size){
   const c = document.createElement('canvas');
   c.width = size; c.height = size;
@@ -309,22 +276,6 @@ function imageToTensorNHWC(img, size){
     out[j+2] = (data[i+2] / 127.5) - 1.0; 
   }
   return new ort.Tensor('float32', out, [1, size, size, 3]);
-}
-
-function imageToTensorNCHW(img, size){
-  const c = document.createElement('canvas');
-  c.width = size; c.height = size;
-  const ctx = c.getContext('2d');
-  ctx.drawImage(img, 0, 0, size, size);
-  const data = ctx.getImageData(0, 0, size, size).data;
-  const out = new Float32Array(3 * size * size);
-  const plane = size * size;
-  for(let p = 0, i = 0; p < plane; p++, i += 4){
-    out[p]           = (data[i]   / 127.5) - 1.0; 
-    out[p + plane]   = (data[i+1] / 127.5) - 1.0; 
-    out[p + 2*plane] = (data[i+2] / 127.5) - 1.0; 
-  }
-  return new ort.Tensor('float32', out, [1, 3, size, size]);
 }
 
 function tensorToCanvasNHWC(tensor, canvas){
@@ -342,62 +293,30 @@ function tensorToCanvasNHWC(tensor, canvas){
   ctx.putImageData(imgData, 0, 0);
 }
 
-function tensorToCanvasNCHW(tensor, canvas){
-  const [_, c, h, w] = tensor.dims;
-  const data = tensor.data;
-  const plane = h * w;
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  const imgData = ctx.createImageData(w, h);
-  for(let p = 0, i = 0; p < plane; p++, i += 4){
-    imgData.data[i]   = clamp255((data[p]           + 1) * 127.5);
-    imgData.data[i+1] = clamp255((data[p + plane]   + 1) * 127.5);
-    imgData.data[i+2] = clamp255((data[p + 2*plane] + 1) * 127.5);
-    imgData.data[i+3] = 255;
-  }
-  ctx.putImageData(imgData, 0, 0);
-}
-
 function clamp255(v){ return Math.max(0, Math.min(255, v)); }
 
 // ---- Core Execution Loop ----
 btnRun.addEventListener('click', async () => {
   if(!session || !currentImageEl) return;
   btnRun.disabled = true;
-  runStatus.textContent = 'Processing frame elements...';
-  const sizeChoice = sizeSelect.value;
-  const size = sizeChoice === 'auto' ? (detected.size || 512) : parseInt(sizeChoice, 10);
+  runStatus.textContent = 'Processing...';
+  
+  // Defaulting to 256x256 resolution selection choice for speed optimization
+  const size = parseInt(sizeSelect.value, 10);
   const t0 = performance.now();
 
-  let attempts = [
-    { name: 'NCHW', build: () => imageToTensorNCHW(currentImageEl, size), draw: tensorToCanvasNCHW },
-    { name: 'NHWC', build: () => imageToTensorNHWC(currentImageEl, size), draw: tensorToCanvasNHWC }
-  ];
-
-  if(sizeChoice === 'auto' && detected.layout){
-    attempts = detected.layout === 'NCHW' ? [attempts[0]] : [attempts[1]];
-  }
-
-  let success = false;
-  for(const attempt of attempts){
-    try{
-      log(`Running transformation pipeline via (${attempt.name})...`);
-      const tensor = attempt.build();
-      const feeds = { [inputName]: tensor };
-      const results = await session.run(feeds);
-      const outTensor = results[outputName];
-      attempt.draw(outTensor, outCanvas);
-      const t1 = performance.now();
-      runStatus.innerHTML = `<span class="pill ok">Rendered in ${((t1-t0)/1000).toFixed(2)}s</span>`;
-      success = true;
-      break;
-    }catch(err){
-      log(`Execution variant ${attempt.name} rejected: ${err.message}`);
-    }
-  }
-
-  if(!success){
-    runStatus.innerHTML = `<span class="pill err">Inference error. See log parameters.</span>`;
+  try{
+    log(`Running transformation pipeline via explicit NHWC layout...`);
+    const tensor = imageToTensorNHWC(currentImageEl, size);
+    const feeds = { [inputName]: tensor };
+    const results = await session.run(feeds);
+    const outTensor = results[outputName];
+    tensorToCanvasNHWC(outTensor, outCanvas);
+    const t1 = performance.now();
+    runStatus.innerHTML = `<span class="pill ok">Rendered in ${((t1-t0)/1000).toFixed(2)}s</span>`;
+  }catch(err){
+    log(`Execution failed: ${err.message}`);
+    runStatus.innerHTML = `<span class="pill" style="background:#3a1d1d;color:#db7f7f;">Inference error. See log parameters.</span>`;
   }
   btnRun.disabled = false;
 });
