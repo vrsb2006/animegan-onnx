@@ -150,7 +150,6 @@ if (navigator.gpu) {
   hwStatusEl.className = "hw-status hw-cpu";
 }
 
-// Global ONNX Runtime Engine Optimization Adjustments
 ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.0/dist/";
 ort.env.wasm.numThreads = 1; 
 
@@ -190,13 +189,13 @@ modelFile.addEventListener('change', async (e) => {
 });
 
 async function initORT(buffer, name) {
-  log('Initializing WebGPU hardware acceleration engine...');
+  log('Initializing WebGPU engine (Standard Memory Mode)...');
   try {
+    // Removed gpu-buffer allocation mapping layer to bypass browser thread lock bugs
     session = await ort.InferenceSession.create(buffer, { 
-      executionProviders: ['webgpu'],
-      preferredOutputLocation: 'gpu-buffer'
+      executionProviders: ['webgpu'] 
     });
-    log('Success: WebGPU acceleration active.');
+    log('Success: WebGPU framework listening.');
   } catch (gpuError) {
     log(`WebGPU dropped: ${gpuError.message}. Falling back to standard WASM CPU...`);
     session = await ort.InferenceSession.create(buffer, { executionProviders: ['wasm'] });
@@ -287,43 +286,47 @@ function tensorToCanvasNHWC(tensor, canvas){
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d');
   const imgData = ctx.createImageData(w, h);
-  for(let i = 0, j = 0; i < imgData.data.length; i += 4, j += 3){
-    imgData.data[i]   = clamp255((data[j]   + 1) * 127.5);
-    imgData.data[i+1] = clamp255((data[j+1] + 1) * 127.5);
-    imgData.data[i+2] = clamp255((data[j+2] + 1) * 127.5);
-    imgData.data[i+3] = 255;
+  const pixels = imgData.data;
+  
+  for(let i = 0, j = 0; i < pixels.length; i += 4, j += 3){
+    pixels[i]     = Math.max(0, Math.min(255, (data[j]   + 1) * 127.5));
+    pixels[i+1]   = Math.max(0, Math.min(255, (data[j+1] + 1) * 127.5));
+    pixels[i+2]   = Math.max(0, Math.min(255, (data[j+2] + 1) * 127.5));
+    pixels[i+3]   = 255;
   }
   ctx.putImageData(imgData, 0, 0);
 }
-
-function clamp255(v){ return Math.max(0, Math.min(255, v)); }
 
 // ---- Optimized Core Execution Loop ----
 btnRun.addEventListener('click', async () => {
   if(!session || !currentImageEl) return;
   btnRun.disabled = true;
-  runStatus.textContent = 'Processing...';
+  runStatus.textContent = 'Processing execution loop...';
   
   const size = parseInt(sizeSelect.value, 10);
   const t0 = performance.now();
 
-  try{
-    log(`Running transformation pipeline via explicit NHWC format matrix at ${size}x${size}...`);
-    const tensor = imageToTensorNHWC(currentImageEl, size);
-    const feeds = { [inputName]: tensor };
-    
-    // Process inference natively via WebGPU internal buffers
-    const results = await session.run(feeds);
-    const outTensor = results[outputName];
-    
-    tensorToCanvasNHWC(outTensor, outCanvas);
-    const t1 = performance.now();
-    runStatus.innerHTML = `<span class="pill ok">Rendered in ${((t1-t0)/1000).toFixed(2)}s</span>`;
-  }catch(err){
-    log(`Execution failed: ${err.message}`);
-    runStatus.innerHTML = `<span class="pill" style="background:#3a1d1d;color:#db7f7f;">Inference error. See logs.</span>`;
-  }
-  btnRun.disabled = false;
+  // Short dynamic delay handle to allow mobile UI rendering status thread to refresh
+  setTimeout(async () => {
+    try{
+      log(`Launching explicit NHWC tensor array pass [Size: ${size}x${size}]...`);
+      const tensor = imageToTensorNHWC(currentImageEl, size);
+      const feeds = { [inputName]: tensor };
+      
+      const results = await session.run(feeds);
+      log("Inference complete. Parsing texture mapping channels...");
+      
+      const outTensor = results[outputName];
+      tensorToCanvasNHWC(outTensor, outCanvas);
+      
+      const t1 = performance.now();
+      runStatus.innerHTML = `<span class="pill ok">Rendered in ${((t1-t0)/1000).toFixed(2)}s</span>`;
+    }catch(err){
+      log(`Execution variant fault: ${err.message}`);
+      runStatus.innerHTML = `<span class="pill" style="background:#3a1d1d;color:#db7f7f;">Inference error. See logs.</span>`;
+    }
+    btnRun.disabled = false;
+  }, 50);
 });
 
 log('System ready.');
